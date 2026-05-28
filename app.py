@@ -322,7 +322,7 @@ def index():
 
 @app.route('/scan', methods=['POST'])
 def start_scan():
-    body = request.get_json(force=True)
+    body = request.get_json(force=True, silent=True) or {}
     raw = (body.get('input') or '').strip()
     if not raw:
         return jsonify({"error": "input is required"}), 400
