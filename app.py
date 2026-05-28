@@ -29,6 +29,78 @@ def normalise_input(raw: str) -> str:
 def is_domain(s: str) -> bool:
     return '.' in s and ' ' not in s
 
+def step_resolve_domain(raw_input: str, data: dict) -> dict:
+    cleaned = normalise_input(raw_input)
+    if is_domain(cleaned):
+        data['domain'] = cleaned
+        return {"status": "done", "summary": f"Domain: {cleaned}"}
+    try:
+        resp = get_client().messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=64,
+            system="You are a domain research assistant. Reply with only the bare domain name, nothing else.",
+            messages=[{"role": "user", "content": f"What is the most likely primary domain for the company named '{cleaned}'? Reply with only the domain, e.g. example.com"}],
+        )
+        domain = normalise_input(resp.content[0].text.strip())
+        data['domain'] = domain
+        return {"status": "done", "summary": f"Resolved: {domain}"}
+    except Exception as e:
+        return {"status": "failed", "summary": str(e)}
+
+
+def step_whois(domain: str, data: dict) -> dict:
+    try:
+        w = whois_lib.whois(domain)
+        created = w.creation_date
+        expiry = w.expiration_date
+        data['whois'] = {
+            "registrar": str(w.registrar or "Unknown"),
+            "created": str(created[0] if isinstance(created, list) else created or "Unknown"),
+            "expiry": str(expiry[0] if isinstance(expiry, list) else expiry or "Unknown"),
+            "registrant_org": str(w.org or w.registrant or "Unknown"),
+            "name_servers": [str(ns).lower() for ns in (w.name_servers or [])],
+        }
+        return {"status": "done", "summary": f"Registrar: {data['whois']['registrar']}"}
+    except Exception as e:
+        data['whois'] = {}
+        return {"status": "failed", "summary": str(e)}
+
+
+def step_dns(domain: str, data: dict) -> dict:
+    records = {"A": [], "MX": [], "TXT": [], "NS": []}
+    try:
+        for rtype in ("A", "MX", "TXT", "NS"):
+            try:
+                records[rtype] = [str(r) for r in dns.resolver.resolve(domain, rtype)]
+            except Exception:
+                pass
+        data['dns'] = records
+        return {"status": "done", "summary": f"{len(records['A'])} A, {len(records['MX'])} MX, {len(records['TXT'])} TXT"}
+    except Exception as e:
+        data['dns'] = records
+        return {"status": "failed", "summary": str(e)}
+
+
+def step_subdomains(domain: str, data: dict) -> dict:
+    try:
+        resp = http.get(
+            f"https://crt.sh/?q=%.{domain}&output=json",
+            timeout=15,
+            headers={"User-Agent": "Heimdall-OSINT/1.0"},
+        )
+        resp.raise_for_status()
+        subdomains = sorted(set(
+            e['name_value'].strip().lower()
+            for e in resp.json()
+            if '*' not in e.get('name_value', '')
+        ))
+        data['subdomains'] = subdomains
+        return {"status": "done", "summary": f"{len(subdomains)} subdomain(s) found"}
+    except Exception as e:
+        data['subdomains'] = []
+        return {"status": "failed", "summary": str(e)}
+
+
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
