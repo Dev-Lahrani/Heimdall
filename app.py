@@ -8,6 +8,7 @@ import whois as whois_lib
 import dns.resolver
 import requests as http
 import anthropic
+import bleach
 
 app = Flask(__name__)
 scans = {}  # scan_id -> {"input": str, "data": dict}
@@ -230,6 +231,9 @@ def step_breach(domain: str, data: dict) -> dict:
     return {"status": "done", "summary": summary}
 
 
+_ALLOWED_TAGS = ['h2', 'p', 'ul', 'li', 'strong', 'span']
+_ALLOWED_ATTRS = {'span': ['class']}
+
 def step_claude_report(domain: str, data: dict) -> dict:
     all_data_str = json.dumps(data, indent=2, default=str)
     try:
@@ -258,7 +262,8 @@ def step_claude_report(domain: str, data: dict) -> dict:
                 ),
             }],
         )
-        html = resp.content[0].text.strip()
+        raw_html = resp.content[0].text.strip()
+        html = bleach.clean(raw_html, tags=_ALLOWED_TAGS, attributes=_ALLOWED_ATTRS, strip=True)
         data['report_html'] = html
         return {"status": "done", "summary": "Threat intelligence report generated"}
     except Exception as e:
@@ -286,11 +291,11 @@ def run_scan(raw_input: str, data: dict):
     for name, fn in _STEPS:
         yield sse("step", {"name": name, "status": "running", "summary": ""})
 
-        if name == "Domain Resolution":
+        if fn is step_resolve_domain:
             result = fn(raw_input, data)
-        elif name == "Generating Report":
+        elif fn is step_claude_report:
             # Guard: only call Claude if at least one data-gathering step succeeded
-            data_steps = [s for n, s in step_statuses.items() if n != "Domain Resolution"]
+            data_steps = [s for f, s in step_statuses.items() if f is not step_resolve_domain]
             if not any(s == "done" for s in data_steps):
                 result = {"status": "failed", "summary": "No data collected — all prior steps failed"}
             else:
@@ -303,7 +308,7 @@ def run_scan(raw_input: str, data: dict):
             else:
                 result = fn(domain, data)
 
-        step_statuses[name] = result["status"]
+        step_statuses[fn] = result["status"]
         yield sse("step", {"name": name, "status": result["status"], "summary": result["summary"]})
 
     report_html = data.get("report_html", "")
