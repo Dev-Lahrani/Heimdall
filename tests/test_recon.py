@@ -78,8 +78,8 @@ def test_step_dns_all_fail():
     with patch("app.dns.resolver.resolve", side_effect=Exception("NXDOMAIN")):
         data = {}
         result = step_dns("google.com", data)
-    # Should still return done (partial results are ok), or failed — either is acceptable
-    assert result["status"] in ("done", "failed")
+    assert result["status"] == "failed"
+    assert result["summary"] == "No DNS records resolved"
     assert "dns" in data
 
 # ── step_subdomains ───────────────────────────────────────────────────────────

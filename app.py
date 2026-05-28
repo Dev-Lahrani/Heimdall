@@ -42,10 +42,18 @@ def step_resolve_domain(raw_input: str, data: dict) -> dict:
             messages=[{"role": "user", "content": f"What is the most likely primary domain for the company named '{cleaned}'? Reply with only the domain, e.g. example.com"}],
         )
         domain = normalise_input(resp.content[0].text.strip())
+        if not is_domain(domain):
+            return {"status": "failed", "summary": f"Claude returned unexpected value: {domain!r}"}
         data['domain'] = domain
         return {"status": "done", "summary": f"Resolved: {domain}"}
     except Exception as e:
         return {"status": "failed", "summary": str(e)}
+
+
+def _safe_date(val) -> str:
+    if isinstance(val, list):
+        return str(val[0]) if val else "Unknown"
+    return str(val) if val else "Unknown"
 
 
 def step_whois(domain: str, data: dict) -> dict:
@@ -55,8 +63,8 @@ def step_whois(domain: str, data: dict) -> dict:
         expiry = w.expiration_date
         data['whois'] = {
             "registrar": str(w.registrar or "Unknown"),
-            "created": str(created[0] if isinstance(created, list) else created or "Unknown"),
-            "expiry": str(expiry[0] if isinstance(expiry, list) else expiry or "Unknown"),
+            "created": _safe_date(created),
+            "expiry": _safe_date(expiry),
             "registrant_org": str(w.org or w.registrant or "Unknown"),
             "name_servers": [str(ns).lower() for ns in (w.name_servers or [])],
         }
@@ -75,6 +83,8 @@ def step_dns(domain: str, data: dict) -> dict:
             except Exception:
                 pass
         data['dns'] = records
+        if not any(records.values()):
+            return {"status": "failed", "summary": "No DNS records resolved"}
         return {"status": "done", "summary": f"{len(records['A'])} A, {len(records['MX'])} MX, {len(records['TXT'])} TXT"}
     except Exception as e:
         data['dns'] = records
@@ -90,9 +100,10 @@ def step_subdomains(domain: str, data: dict) -> dict:
         )
         resp.raise_for_status()
         subdomains = sorted(set(
-            e['name_value'].strip().lower()
+            entry.strip()
             for e in resp.json()
-            if '*' not in e.get('name_value', '')
+            for entry in e.get('name_value', '').strip().lower().split('\n')
+            if entry.strip() and '*' not in entry.strip()
         ))
         data['subdomains'] = subdomains
         return {"status": "done", "summary": f"{len(subdomains)} subdomain(s) found"}
