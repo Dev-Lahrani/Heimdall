@@ -211,6 +211,10 @@
     <ul id="steps-list"></ul>
   </section>
 
+  <div id="new-scan-wrap" style="width:100%;max-width:700px;display:none;margin-bottom:1rem;">
+    <button id="new-scan-btn" class="action-btn" onclick="newScan()">New Scan</button>
+  </div>
+
   <section id="report-section">
     <h2>// Threat Intelligence Report</h2>
     <div id="report-body"></div>
@@ -330,12 +334,17 @@
         activeSource.close();
         activeSource = null;
         setScanning(false);
-        document.getElementById('action-bar').style.display = 'flex';
+        document.getElementById('new-scan-wrap').style.display = 'block';
+        if (document.getElementById('report-body').innerHTML.trim()) {
+          document.getElementById('action-bar').style.display = 'flex';
+        }
       });
 
       activeSource.onerror = () => {
         if (activeSource) { activeSource.close(); activeSource = null; }
         setScanning(false);
+        document.getElementById('new-scan-btn').style.display = 'inline-block';
+        document.getElementById('new-scan-wrap').style.display = 'block';
         if (!document.getElementById('report-body').innerHTML.trim()) {
           showError('Stream connection lost. The scan may have encountered an error.');
         }
@@ -362,6 +371,7 @@
       document.getElementById('progress-section').style.display = 'none';
       document.getElementById('report-section').style.display = 'none';
       document.getElementById('action-bar').style.display = 'none';
+      document.getElementById('new-scan-wrap').style.display = 'none';
       document.getElementById('report-body').innerHTML = '';
       document.getElementById('target-input').value = '';
       document.getElementById('target-input').focus();

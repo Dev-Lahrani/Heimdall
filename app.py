@@ -53,7 +53,7 @@ def step_resolve_domain(raw_input: str, data: dict) -> dict:
 
 def _safe_date(val) -> str:
     if isinstance(val, list):
-        return str(val[0]) if val else "Unknown"
+        return str(val[0]) if (val and val[0] is not None) else "Unknown"
     return str(val) if val else "Unknown"
 
 
@@ -323,6 +323,8 @@ def index():
 @app.route('/scan', methods=['POST'])
 def start_scan():
     body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "input is required"}), 400
     raw = (body.get('input') or '').strip()
     if not raw:
         return jsonify({"error": "input is required"}), 400
@@ -337,7 +339,10 @@ def stream(scan_id):
         return jsonify({"error": "scan not found"}), 404
 
     def generate():
-        yield from run_scan(scan["input"], scan["data"])
+        try:
+            yield from run_scan(scan["input"], scan["data"])
+        finally:
+            scans.pop(scan_id, None)
 
     return Response(
         stream_with_context(generate()),
@@ -346,4 +351,4 @@ def stream(scan_id):
     )
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=os.environ.get("FLASK_DEBUG", "0") == "1", port=5000)
