@@ -1,0 +1,6 @@
+flask
+anthropic
+requests
+dnspython
+python-whois
+pytest
