@@ -1,1 +1,374 @@
-<!DOCTYPE html><html><body>Heimdall</body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heimdall — OSINT Intelligence</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --green:    #00ff88;
+      --green-dim:#00cc6a;
+      --red:      #ff4444;
+      --amber:    #ffaa00;
+      --text:     #c9d1d9;
+      --muted:    #8b949e;
+      --font:     'Courier New', Courier, monospace;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── header ── */
+    header { text-align: center; margin-bottom: 2.5rem; }
+    header h1 {
+      font-size: clamp(2rem, 6vw, 3.5rem);
+      letter-spacing: 0.25em;
+      color: var(--green);
+      text-shadow: 0 0 20px rgba(0,255,136,0.4);
+    }
+    header p { color: var(--muted); margin-top: 0.4rem; font-size: 0.9rem; letter-spacing: 0.05em; }
+
+    /* ── input bar ── */
+    #input-section { width: 100%; max-width: 700px; margin-bottom: 2rem; }
+    #scan-form { display: flex; gap: 0.75rem; }
+    #target-input {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #target-input:focus { border-color: var(--green); }
+    #scan-btn {
+      padding: 0.75rem 1.5rem;
+      background: var(--green);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      font-family: var(--font);
+      font-weight: bold;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      white-space: nowrap;
+    }
+    #scan-btn:hover:not(:disabled) { background: var(--green-dim); }
+    #scan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── progress feed ── */
+    #progress-section { width: 100%; max-width: 700px; display: none; margin-bottom: 2rem; }
+    #progress-section h2 { color: var(--green); font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 0.75rem; }
+    #steps-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+    .step-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    .step-icon { width: 1.2rem; text-align: center; flex-shrink: 0; }
+    .step-name { color: var(--text); min-width: 10rem; }
+    .step-summary { color: var(--muted); font-size: 0.8rem; }
+    .status-running .step-icon::after { content: '⟳'; color: var(--amber); animation: spin 1s linear infinite; display: inline-block; }
+    .status-done    .step-icon::after { content: '✓'; color: var(--green); }
+    .status-failed  .step-icon::after { content: '✗'; color: var(--red); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── report ── */
+    #report-section { width: 100%; max-width: 700px; display: none; }
+    #report-section h2 { color: var(--green); font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 0.75rem; }
+    #report-body {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem 2rem;
+      line-height: 1.7;
+    }
+    #report-body h2 {
+      color: var(--green);
+      font-size: 1rem;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.4rem;
+      margin: 1.5rem 0 0.75rem;
+      text-transform: none;
+    }
+    #report-body h2:first-child { margin-top: 0; }
+    #report-body p  { margin-bottom: 0.75rem; color: var(--text); font-size: 0.9rem; }
+    #report-body ul { margin: 0.5rem 0 0.75rem 1.2rem; }
+    #report-body li { margin-bottom: 0.35rem; color: var(--text); font-size: 0.9rem; }
+    #report-body strong { color: #e6edf3; }
+
+    .badge-high   { background: #ff4444; color: #fff; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+    .badge-medium { background: #ffaa00; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+    .badge-low    { background: #00ff88; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+
+    /* ── action bar ── */
+    #action-bar { display: none; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
+    .action-btn {
+      padding: 0.6rem 1.2rem;
+      border: 1px solid var(--green);
+      background: transparent;
+      color: var(--green);
+      border-radius: 6px;
+      font-family: var(--font);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+    .action-btn:hover { background: var(--green); color: #0d1117; }
+
+    /* ── error banner ── */
+    #error-banner {
+      display: none;
+      width: 100%;
+      max-width: 700px;
+      padding: 0.75rem 1rem;
+      background: rgba(255,68,68,0.1);
+      border: 1px solid var(--red);
+      border-radius: 6px;
+      color: var(--red);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── footer ── */
+    footer {
+      margin-top: auto;
+      padding-top: 3rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: center;
+      max-width: 600px;
+    }
+
+    /* ── print / PDF ── */
+    @media print {
+      body { background: #fff; color: #000; padding: 1rem; }
+      header h1 { color: #000; text-shadow: none; }
+      #input-section, #progress-section, #action-bar, footer { display: none !important; }
+      #report-section { display: block !important; }
+      #report-body { border: none; padding: 0; }
+      #report-body h2 { color: #000; border-bottom: 1px solid #ccc; }
+      #report-body p, #report-body li { color: #000; }
+      .badge-high   { background: #fcc; color: #000; }
+      .badge-medium { background: #fec; color: #000; }
+      .badge-low    { background: #cfc; color: #000; }
+    }
+
+    @media (max-width: 500px) {
+      #scan-form { flex-direction: column; }
+      .step-name { min-width: unset; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>HEIMDALL</h1>
+    <p>Autonomous OSINT Intelligence Platform</p>
+  </header>
+
+  <section id="input-section">
+    <form id="scan-form" onsubmit="startScan(event)">
+      <input
+        id="target-input"
+        type="text"
+        placeholder="company name or domain (e.g. google.com)"
+        autocomplete="off"
+        spellcheck="false"
+        required
+      />
+      <button id="scan-btn" type="submit">Run Scan</button>
+    </form>
+  </section>
+
+  <div id="error-banner"></div>
+
+  <section id="progress-section">
+    <h2>// Recon Progress</h2>
+    <ul id="steps-list"></ul>
+  </section>
+
+  <section id="report-section">
+    <h2>// Threat Intelligence Report</h2>
+    <div id="report-body"></div>
+    <div id="action-bar">
+      <button class="action-btn" onclick="copyReport()">Copy Report</button>
+      <button class="action-btn" onclick="window.print()">Download PDF</button>
+      <button class="action-btn" onclick="newScan()">New Scan</button>
+    </div>
+  </section>
+
+  <footer>
+    Heimdall uses only publicly available data.<br />
+    Use responsibly and only on domains you own or have permission to test.
+  </footer>
+
+  <script>
+    const STEP_NAMES = [
+      "Domain Resolution",
+      "WHOIS Lookup",
+      "DNS Enumeration",
+      "Subdomain Discovery",
+      "Tech Stack Detection",
+      "Wayback Machine",
+      "Robots & Sitemap",
+      "Breach Check",
+      "Generating Report",
+    ];
+
+    let activeSource = null;
+
+    function showError(msg) {
+      const banner = document.getElementById('error-banner');
+      banner.textContent = msg;
+      banner.style.display = 'block';
+    }
+
+    function hideError() {
+      document.getElementById('error-banner').style.display = 'none';
+    }
+
+    function setScanning(active) {
+      document.getElementById('scan-btn').disabled = active;
+      document.getElementById('target-input').disabled = active;
+    }
+
+    function buildProgressRows() {
+      const list = document.getElementById('steps-list');
+      list.innerHTML = '';
+      STEP_NAMES.forEach(name => {
+        const li = document.createElement('li');
+        li.className = 'step-row status-pending';
+        li.id = `step-${name.replace(/\s+/g, '-')}`;
+        li.innerHTML = `
+          <span class="step-icon"></span>
+          <span class="step-name">${name}</span>
+          <span class="step-summary"></span>
+        `;
+        list.appendChild(li);
+      });
+    }
+
+    function updateStep(name, status, summary) {
+      const id = `step-${name.replace(/\s+/g, '-')}`;
+      const row = document.getElementById(id);
+      if (!row) return;
+      row.className = `step-row status-${status}`;
+      row.querySelector('.step-summary').textContent = summary || '';
+    }
+
+    async function startScan(e) {
+      e.preventDefault();
+      hideError();
+
+      const input = document.getElementById('target-input').value.trim();
+      if (!input) return;
+
+      // Reset UI
+      document.getElementById('report-section').style.display = 'none';
+      document.getElementById('action-bar').style.display = 'none';
+      document.getElementById('report-body').innerHTML = '';
+      buildProgressRows();
+      document.getElementById('progress-section').style.display = 'block';
+      setScanning(true);
+
+      if (activeSource) { activeSource.close(); activeSource = null; }
+
+      let scanId;
+      try {
+        const resp = await fetch('/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input }),
+        });
+        const json = await resp.json();
+        if (!resp.ok) { showError(json.error || 'Scan failed to start'); setScanning(false); return; }
+        scanId = json.scan_id;
+      } catch (err) {
+        showError('Could not reach the server. Is Flask running?');
+        setScanning(false);
+        return;
+      }
+
+      activeSource = new EventSource(`/stream/${scanId}`);
+
+      activeSource.addEventListener('step', e => {
+        const d = JSON.parse(e.data);
+        updateStep(d.name, d.status, d.summary);
+      });
+
+      activeSource.addEventListener('report', e => {
+        const d = JSON.parse(e.data);
+        document.getElementById('report-body').innerHTML = d.html;
+        document.getElementById('report-section').style.display = 'block';
+      });
+
+      activeSource.addEventListener('done', () => {
+        activeSource.close();
+        activeSource = null;
+        setScanning(false);
+        document.getElementById('action-bar').style.display = 'flex';
+      });
+
+      activeSource.onerror = () => {
+        activeSource.close();
+        activeSource = null;
+        setScanning(false);
+        showError('Stream connection lost. The scan may have encountered an error.');
+      };
+    }
+
+    function copyReport() {
+      const text = document.getElementById('report-body').innerText;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      const btn = event.target;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy Report'; }, 1500);
+    }
+
+    function newScan() {
+      document.getElementById('progress-section').style.display = 'none';
+      document.getElementById('report-section').style.display = 'none';
+      document.getElementById('action-bar').style.display = 'none';
+      document.getElementById('report-body').innerHTML = '';
+      document.getElementById('target-input').value = '';
+      document.getElementById('target-input').focus();
+      hideError();
+      setScanning(false);
+    }
+  </script>
+
+</body>
+</html>
