@@ -3,7 +3,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from unittest.mock import patch, MagicMock
 from app import (
-    step_resolve_domain, step_whois, step_dns, step_subdomains
+    step_resolve_domain, step_whois, step_dns, step_subdomains,
+    step_tech_stack, step_wayback, step_robots_sitemap, step_breach,
 )
 
 # ── step_resolve_domain ──────────────────────────────────────────────────────
@@ -105,8 +106,6 @@ def test_step_subdomains_failure():
         result = step_subdomains("google.com", data)
     assert result["status"] == "failed"
     assert data["subdomains"] == []
-
-from app import step_tech_stack, step_wayback, step_robots_sitemap, step_breach
 
 # ── step_tech_stack ───────────────────────────────────────────────────────────
 
