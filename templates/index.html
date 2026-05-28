@@ -215,7 +215,7 @@
     <h2>// Threat Intelligence Report</h2>
     <div id="report-body"></div>
     <div id="action-bar">
-      <button class="action-btn" onclick="copyReport()">Copy Report</button>
+      <button class="action-btn" onclick="copyReport(this)">Copy Report</button>
       <button class="action-btn" onclick="window.print()">Download PDF</button>
       <button class="action-btn" onclick="newScan()">New Scan</button>
     </div>
@@ -334,14 +334,15 @@
       });
 
       activeSource.onerror = () => {
-        activeSource.close();
-        activeSource = null;
+        if (activeSource) { activeSource.close(); activeSource = null; }
         setScanning(false);
-        showError('Stream connection lost. The scan may have encountered an error.');
+        if (!document.getElementById('report-body').innerHTML.trim()) {
+          showError('Stream connection lost. The scan may have encountered an error.');
+        }
       };
     }
 
-    function copyReport() {
+    function copyReport(btn) {
       const text = document.getElementById('report-body').innerText;
       if (navigator.clipboard) {
         navigator.clipboard.writeText(text);
@@ -353,7 +354,6 @@
         document.execCommand('copy');
         document.body.removeChild(ta);
       }
-      const btn = event.target;
       btn.textContent = 'Copied!';
       setTimeout(() => { btn.textContent = 'Copy Report'; }, 1500);
     }
