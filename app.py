@@ -230,10 +230,85 @@ def step_breach(domain: str, data: dict) -> dict:
     return {"status": "done", "summary": summary}
 
 
+def step_claude_report(domain: str, data: dict) -> dict:
+    all_data_str = json.dumps(data, indent=2, default=str)
+    try:
+        resp = get_client().messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            system=(
+                "You are a senior threat intelligence analyst. You write professional, "
+                "structured OSINT reports for defensive security teams. "
+                "Output ONLY valid HTML using <h2>, <p>, <ul>, <li>, <strong>, <span> tags. "
+                "No markdown. No code blocks. No preamble."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Based on this raw OSINT data about {domain}, write a professional "
+                    f"threat intelligence report with these exact sections:\n"
+                    f"1. Executive Summary (3 sentences, non-technical)\n"
+                    f"2. Digital Footprint Overview\n"
+                    f"3. Exposed Attack Surface (subdomains, tech stack, open paths)\n"
+                    f"4. Breach & Leak History\n"
+                    f"5. Key Risk Findings — rank each High / Medium / Low, wrap badge in "
+                    f"<span class='badge-high'>, <span class='badge-medium'>, or <span class='badge-low'>\n"
+                    f"6. Recommended Actions\n"
+                    f"Raw data: {all_data_str}"
+                ),
+            }],
+        )
+        html = resp.content[0].text.strip()
+        data['report_html'] = html
+        return {"status": "done", "summary": "Threat intelligence report generated"}
+    except Exception as e:
+        return {"status": "failed", "summary": str(e)}
+
+
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
+_STEPS = [
+    ("Domain Resolution",    step_resolve_domain),
+    ("WHOIS Lookup",         step_whois),
+    ("DNS Enumeration",      step_dns),
+    ("Subdomain Discovery",  step_subdomains),
+    ("Tech Stack Detection", step_tech_stack),
+    ("Wayback Machine",      step_wayback),
+    ("Robots & Sitemap",     step_robots_sitemap),
+    ("Breach Check",         step_breach),
+    ("Generating Report",    step_claude_report),
+]
+
 def run_scan(raw_input: str, data: dict):
+    step_statuses = {}
+
+    for name, fn in _STEPS:
+        yield sse("step", {"name": name, "status": "running", "summary": ""})
+
+        if name == "Domain Resolution":
+            result = fn(raw_input, data)
+        elif name == "Generating Report":
+            # Guard: only call Claude if at least one data-gathering step succeeded
+            data_steps = [s for n, s in step_statuses.items() if n != "Domain Resolution"]
+            if not any(s == "done" for s in data_steps):
+                result = {"status": "failed", "summary": "No data collected — all prior steps failed"}
+            else:
+                domain = data.get('domain', '')
+                result = fn(domain, data)
+        else:
+            domain = data.get('domain', '')
+            if not domain:
+                result = {"status": "failed", "summary": "No domain resolved in Step 1"}
+            else:
+                result = fn(domain, data)
+
+        step_statuses[name] = result["status"]
+        yield sse("step", {"name": name, "status": result["status"], "summary": result["summary"]})
+
+    report_html = data.get("report_html", "")
+    if report_html:
+        yield sse("report", {"html": report_html})
     yield sse("done", {})
 
 @app.route('/')
