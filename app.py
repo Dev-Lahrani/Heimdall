@@ -20,11 +20,11 @@ def get_client():
     return _client
 
 def normalise_input(raw: str) -> str:
-    s = raw.strip()
+    s = raw.strip().lower()
     s = re.sub(r'^https?://', '', s)
     s = re.sub(r'^www\.', '', s)
     s = s.rstrip('/')
-    return s.lower()
+    return s
 
 def is_domain(s: str) -> bool:
     return '.' in s and ' ' not in s

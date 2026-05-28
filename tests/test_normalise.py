@@ -32,3 +32,6 @@ def test_is_domain_false_spaces():
 
 def test_is_domain_false_no_dot():
     assert is_domain("google") is False
+
+def test_strips_uppercase_https():
+    assert normalise_input("HTTPS://WWW.Google.COM/") == "google.com"
