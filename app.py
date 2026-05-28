@@ -18,3 +18,13 @@ def get_client():
     if _client is None:
         _client = anthropic.Anthropic()
     return _client
+
+def normalise_input(raw: str) -> str:
+    s = raw.strip()
+    s = re.sub(r'^https?://', '', s)
+    s = re.sub(r'^www\.', '', s)
+    s = s.rstrip('/')
+    return s.lower()
+
+def is_domain(s: str) -> bool:
+    return '.' in s and ' ' not in s
