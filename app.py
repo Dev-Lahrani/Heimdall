@@ -112,6 +112,124 @@ def step_subdomains(domain: str, data: dict) -> dict:
         return {"status": "failed", "summary": str(e)}
 
 
+def step_tech_stack(domain: str, data: dict) -> dict:
+    try:
+        resp = http.get(
+            f"https://{domain}",
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Heimdall-OSINT/1.0)"},
+            allow_redirects=True,
+        )
+        html = resp.text.lower()
+        headers = {k.lower(): v.lower() for k, v in resp.headers.items()}
+        checks = [
+            ("WordPress",        "wp-content" in html or "wp-includes" in html),
+            ("Drupal",           "drupal" in html),
+            ("Joomla",           "joomla" in html),
+            ("React",            "react-dom" in html or "_react" in html),
+            ("Vue.js",           "vue.js" in html or "__vue__" in html),
+            ("Angular",          "ng-app" in html or "angular.min.js" in html),
+            ("jQuery",           "jquery" in html),
+            ("Bootstrap",        "bootstrap" in html),
+            ("Tailwind CSS",     "tailwind" in html),
+            ("Google Analytics", "google-analytics.com" in html or "gtag(" in html),
+            ("Google Tag Manager", "googletagmanager.com" in html),
+            ("Cloudflare",       "cloudflare" in headers.get("server", "") or "cf-ray" in headers),
+            ("nginx",            "nginx" in headers.get("server", "")),
+            ("Apache",           "apache" in headers.get("server", "")),
+            ("PHP",              "php" in headers.get("x-powered-by", "")),
+        ]
+        detected = [name for name, found in checks if found]
+        data['tech_stack'] = {
+            "server": resp.headers.get("Server", "Unknown"),
+            "powered_by": resp.headers.get("X-Powered-By", ""),
+            "detected": detected,
+        }
+        return {"status": "done", "summary": f"Detected: {', '.join(detected) or 'nothing identified'}"}
+    except Exception as e:
+        data['tech_stack'] = {"server": "", "powered_by": "", "detected": []}
+        return {"status": "failed", "summary": str(e)}
+
+
+def step_wayback(domain: str, data: dict) -> dict:
+    try:
+        resp = http.get(
+            f"http://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&limit=20&fl=original&collapse=urlkey",
+            timeout=15,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        urls = [row[0] for row in rows[1:] if row] if len(rows) > 1 else []
+        data['wayback'] = urls
+        return {"status": "done", "summary": f"{len(urls)} historical URL(s) found"}
+    except Exception as e:
+        data['wayback'] = []
+        return {"status": "failed", "summary": str(e)}
+
+
+def step_robots_sitemap(domain: str, data: dict) -> dict:
+    disallowed, sitemaps_from_robots, sitemap_locs = [], [], []
+    try:
+        r = http.get(f"https://{domain}/robots.txt", timeout=8)
+        if r.status_code == 200:
+            for line in r.text.splitlines():
+                line = line.strip()
+                if line.lower().startswith("disallow:"):
+                    path = line.split(":", 1)[1].strip()
+                    if path:
+                        disallowed.append(path)
+                elif line.lower().startswith("sitemap:"):
+                    sitemaps_from_robots.append(line.split(":", 1)[1].strip())
+    except Exception:
+        pass
+    try:
+        sitemap_url = sitemaps_from_robots[0] if sitemaps_from_robots else f"https://{domain}/sitemap.xml"
+        sr = http.get(sitemap_url, timeout=8)
+        if sr.status_code == 200:
+            sitemap_locs = re.findall(r'<loc>(.*?)</loc>', sr.text, re.IGNORECASE)[:20]
+    except Exception:
+        pass
+    data['robots'] = {"disallowed": disallowed, "sitemaps": sitemaps_from_robots}
+    data['sitemap'] = sitemap_locs
+    return {"status": "done", "summary": f"{len(disallowed)} disallowed path(s), {len(sitemap_locs)} sitemap entries"}
+
+
+def step_breach(domain: str, data: dict) -> dict:
+    paste_results, hibp_results, hibp_note = [], [], ""
+    try:
+        r = http.get(f"https://psbdmp.ws/api/v3/search/{domain}", timeout=8)
+        if r.status_code == 200:
+            result = r.json()
+            paste_results = result if isinstance(result, list) else []
+    except Exception:
+        pass
+    hibp_key = os.environ.get("HIBP_API_KEY")
+    if hibp_key:
+        try:
+            r = http.get(
+                f"https://haveibeenpwned.com/api/v3/breacheddomain/{domain}",
+                headers={"hibp-api-key": hibp_key, "user-agent": "Heimdall-OSINT/1.0"},
+                timeout=8,
+            )
+            if r.status_code == 200:
+                hibp_results = list(r.json().keys())
+            elif r.status_code == 404:
+                hibp_note = "No breaches found in HIBP"
+            else:
+                hibp_note = f"HIBP returned {r.status_code}"
+        except Exception as e:
+            hibp_note = f"HIBP check failed: {e}"
+    else:
+        hibp_note = "HIBP check skipped (no API key configured)"
+    data['breach'] = {"psbdmp": paste_results, "hibp": hibp_results, "hibp_note": hibp_note}
+    summary = f"{len(paste_results)} paste mention(s)"
+    if hibp_results:
+        summary += f", {len(hibp_results)} HIBP breach(es)"
+    elif hibp_note:
+        summary += f" · {hibp_note}"
+    return {"status": "done", "summary": summary}
+
+
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
