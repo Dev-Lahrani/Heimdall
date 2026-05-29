@@ -2,6 +2,7 @@ import uuid
 import json
 import os
 import re
+import datetime
 
 from flask import Flask, request, jsonify, Response, render_template, stream_with_context
 import whois as whois_lib
@@ -9,16 +10,20 @@ import dns.resolver
 import requests as http
 import anthropic
 import bleach
+import weasyprint
 
 app = Flask(__name__)
-scans = {}  # scan_id -> {"input": str, "data": dict}
+scans = {}          # scan_id -> {"input": str, "data": dict}
+scan_history = []   # recent scan summaries, max 5
 _client = None
+
 
 def get_client():
     global _client
     if _client is None:
         _client = anthropic.Anthropic()
     return _client
+
 
 def normalise_input(raw: str) -> str:
     s = raw.strip().lower()
@@ -27,8 +32,10 @@ def normalise_input(raw: str) -> str:
     s = s.rstrip('/')
     return s
 
+
 def is_domain(s: str) -> bool:
     return '.' in s and ' ' not in s
+
 
 def step_resolve_domain(raw_input: str, data: dict) -> dict:
     cleaned = normalise_input(raw_input)
@@ -60,12 +67,10 @@ def _safe_date(val) -> str:
 def step_whois(domain: str, data: dict) -> dict:
     try:
         w = whois_lib.whois(domain)
-        created = w.creation_date
-        expiry = w.expiration_date
         data['whois'] = {
             "registrar": str(w.registrar or "Unknown"),
-            "created": _safe_date(created),
-            "expiry": _safe_date(expiry),
+            "created": _safe_date(w.creation_date),
+            "expiry": _safe_date(w.expiration_date),
             "registrant_org": str(w.org or w.registrant or "Unknown"),
             "name_servers": [str(ns).lower() for ns in (w.name_servers or [])],
         }
@@ -124,21 +129,21 @@ def step_tech_stack(domain: str, data: dict) -> dict:
         html = resp.text.lower()
         headers = {k.lower(): v.lower() for k, v in resp.headers.items()}
         checks = [
-            ("WordPress",        "wp-content" in html or "wp-includes" in html),
-            ("Drupal",           "drupal" in html),
-            ("Joomla",           "joomla" in html),
-            ("React",            "react-dom" in html or "_react" in html),
-            ("Vue.js",           "vue.js" in html or "__vue__" in html),
-            ("Angular",          "ng-app" in html or "angular.min.js" in html),
-            ("jQuery",           "jquery" in html),
-            ("Bootstrap",        "bootstrap" in html),
-            ("Tailwind CSS",     "tailwind" in html),
-            ("Google Analytics", "google-analytics.com" in html or "gtag(" in html),
+            ("WordPress",          "wp-content" in html or "wp-includes" in html),
+            ("Drupal",             "drupal" in html),
+            ("Joomla",             "joomla" in html),
+            ("React",              "react-dom" in html or "_react" in html),
+            ("Vue.js",             "vue.js" in html or "__vue__" in html),
+            ("Angular",            "ng-app" in html or "angular.min.js" in html),
+            ("jQuery",             "jquery" in html),
+            ("Bootstrap",          "bootstrap" in html),
+            ("Tailwind CSS",       "tailwind" in html),
+            ("Google Analytics",   "google-analytics.com" in html or "gtag(" in html),
             ("Google Tag Manager", "googletagmanager.com" in html),
-            ("Cloudflare",       "cloudflare" in headers.get("server", "") or "cf-ray" in headers),
-            ("nginx",            "nginx" in headers.get("server", "")),
-            ("Apache",           "apache" in headers.get("server", "")),
-            ("PHP",              "php" in headers.get("x-powered-by", "")),
+            ("Cloudflare",         "cloudflare" in headers.get("server", "") or "cf-ray" in headers),
+            ("nginx",              "nginx" in headers.get("server", "")),
+            ("Apache",             "apache" in headers.get("server", "")),
+            ("PHP",                "php" in headers.get("x-powered-by", "")),
         ]
         detected = [name for name, found in checks if found]
         data['tech_stack'] = {
@@ -231,20 +236,90 @@ def step_breach(domain: str, data: dict) -> dict:
     return {"status": "done", "summary": summary}
 
 
+def step_github_leaks(domain: str, data: dict) -> dict:
+    try:
+        resp = http.get(
+            f"https://api.github.com/search/code?q={domain}&per_page=5",
+            headers={
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Heimdall-OSINT/1.0",
+            },
+            timeout=10,
+        )
+        if resp.status_code == 403:
+            data['github'] = []
+            data['github_total'] = 0
+            return {"status": "done", "summary": "GitHub rate limit reached — skipped"}
+        resp.raise_for_status()
+        body = resp.json()
+        total = body.get("total_count", 0)
+        items = body.get("items", [])
+        data['github'] = [
+            {
+                "repo": item["repository"]["full_name"],
+                "file": item["path"],
+                "url": item["html_url"],
+            }
+            for item in items
+        ]
+        data['github_total'] = total
+        return {"status": "done", "summary": f"{total} code mention(s) found on GitHub"}
+    except Exception as e:
+        data['github'] = []
+        data['github_total'] = 0
+        return {"status": "failed", "summary": str(e)}
+
+
+def step_virustotal(domain: str, data: dict) -> dict:
+    vt_key = os.environ.get("VT_API_KEY")
+    if not vt_key:
+        data['virustotal'] = {}
+        return {"status": "done", "summary": "VirusTotal skipped (no API key configured)"}
+    try:
+        resp = http.get(
+            f"https://www.virustotal.com/api/v3/domains/{domain}",
+            headers={"x-apikey": vt_key},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            attrs = resp.json().get("data", {}).get("attributes", {})
+            stats = attrs.get("last_analysis_stats", {})
+            malicious = stats.get("malicious", 0)
+            suspicious = stats.get("suspicious", 0)
+            harmless = stats.get("harmless", 0)
+            data['virustotal'] = {
+                "malicious": malicious,
+                "suspicious": suspicious,
+                "harmless": harmless,
+            }
+            return {"status": "done", "summary": f"{malicious} malicious, {suspicious} suspicious, {harmless} harmless engines"}
+        elif resp.status_code == 404:
+            data['virustotal'] = {}
+            return {"status": "done", "summary": "Domain not found in VirusTotal"}
+        else:
+            data['virustotal'] = {}
+            return {"status": "done", "summary": f"VirusTotal returned {resp.status_code}"}
+    except Exception as e:
+        data['virustotal'] = {}
+        return {"status": "failed", "summary": str(e)}
+
+
 _ALLOWED_TAGS = ['h2', 'p', 'ul', 'li', 'strong', 'span']
 _ALLOWED_ATTRS = {'span': ['class']}
+
 
 def step_claude_report(domain: str, data: dict) -> dict:
     all_data_str = json.dumps(data, indent=2, default=str)
     try:
         resp = get_client().messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=4096,
+            max_tokens=2000,
             system=(
                 "You are a senior threat intelligence analyst. You write professional, "
                 "structured OSINT reports for defensive security teams. "
                 "Output ONLY valid HTML using <h2>, <p>, <ul>, <li>, <strong>, <span> tags. "
-                "No markdown. No code blocks. No preamble."
+                "No markdown. No code blocks. No preamble. "
+                "After the HTML, on a new line write exactly: RISK_SCORE: <integer 0-100>"
             ),
             messages=[{
                 "role": "user",
@@ -254,24 +329,33 @@ def step_claude_report(domain: str, data: dict) -> dict:
                     f"1. Executive Summary (3 sentences, non-technical)\n"
                     f"2. Digital Footprint Overview\n"
                     f"3. Exposed Attack Surface (subdomains, tech stack, open paths)\n"
-                    f"4. Breach & Leak History\n"
-                    f"5. Key Risk Findings — rank each High / Medium / Low, wrap badge in "
+                    f"4. GitHub Exposure (leaked credentials, exposed configs, code mentions)\n"
+                    f"5. Breach & Leak History\n"
+                    f"6. Key Risk Findings — rank each High / Medium / Low, wrap badge in "
                     f"<span class='badge-high'>, <span class='badge-medium'>, or <span class='badge-low'>\n"
-                    f"6. Recommended Actions\n"
+                    f"7. Recommended Actions\n"
                     f"Raw data: {all_data_str}"
                 ),
             }],
         )
-        raw_html = resp.content[0].text.strip()
+        raw_text = resp.content[0].text.strip()
+
+        score_match = re.search(r'RISK_SCORE:\s*(\d+)', raw_text)
+        risk_score = min(100, max(0, int(score_match.group(1)))) if score_match else 50
+
+        raw_html = re.sub(r'\s*RISK_SCORE:\s*\d+\s*$', '', raw_text, flags=re.MULTILINE).strip()
         html = bleach.clean(raw_html, tags=_ALLOWED_TAGS, attributes=_ALLOWED_ATTRS, strip=True)
+
         data['report_html'] = html
-        return {"status": "done", "summary": "Threat intelligence report generated"}
+        data['risk_score'] = risk_score
+        return {"status": "done", "summary": f"Threat intelligence report generated (risk score: {risk_score})"}
     except Exception as e:
         return {"status": "failed", "summary": str(e)}
 
 
-def sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+def sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
 
 _STEPS = [
     ("Domain Resolution",    step_resolve_domain),
@@ -282,10 +366,13 @@ _STEPS = [
     ("Wayback Machine",      step_wayback),
     ("Robots & Sitemap",     step_robots_sitemap),
     ("Breach Check",         step_breach),
+    ("GitHub Leaks",         step_github_leaks),
+    ("VirusTotal Check",     step_virustotal),
     ("Generating Report",    step_claude_report),
 ]
 
-def run_scan(raw_input: str, data: dict):
+
+def run_scan(scan_id: str, raw_input: str, data: dict):
     step_statuses = {}
 
     for name, fn in _STEPS:
@@ -294,7 +381,6 @@ def run_scan(raw_input: str, data: dict):
         if fn is step_resolve_domain:
             result = fn(raw_input, data)
         elif fn is step_claude_report:
-            # Guard: only call Claude if at least one data-gathering step succeeded
             data_steps = [s for f, s in step_statuses.items() if f is not step_resolve_domain]
             if not any(s == "done" for s in data_steps):
                 result = {"status": "failed", "summary": "No data collected — all prior steps failed"}
@@ -313,12 +399,50 @@ def run_scan(raw_input: str, data: dict):
 
     report_html = data.get("report_html", "")
     if report_html:
-        yield sse("report", {"html": report_html})
+        breach_data = data.get('breach', {})
+        breach_status = "breached" if (breach_data.get('hibp') or breach_data.get('psbdmp')) else "clean"
+
+        yield sse("report", {
+            "html": report_html,
+            "risk_score": data.get('risk_score', 50),
+            "subdomain_count": len(data.get('subdomains', [])),
+            "breach_status": breach_status,
+            "tech_count": len(data.get('tech_stack', {}).get('detected', [])),
+            "github_count": data.get('github_total', 0),
+            "wayback_count": len(data.get('wayback', [])),
+            "dns_count": sum(len(v) for v in data.get('dns', {}).values()),
+        })
+
+        scan_history.append({
+            "scan_id": scan_id,
+            "input": raw_input,
+            "domain": data.get('domain', raw_input),
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "risk_score": data.get('risk_score', 50),
+        })
+        if len(scan_history) > 5:
+            scan_history.pop(0)
+
+        if len(scans) > 10:
+            oldest = next(iter(scans))
+            del scans[oldest]
+
     yield sse("done", {})
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
 
 @app.route('/scan', methods=['POST'])
 def start_scan():
@@ -332,6 +456,7 @@ def start_scan():
     scans[scan_id] = {"input": raw, "data": {}}
     return jsonify({"scan_id": scan_id})
 
+
 @app.route('/stream/<scan_id>')
 def stream(scan_id):
     scan = scans.get(scan_id)
@@ -339,16 +464,65 @@ def stream(scan_id):
         return jsonify({"error": "scan not found"}), 404
 
     def generate():
-        try:
-            yield from run_scan(scan["input"], scan["data"])
-        finally:
-            scans.pop(scan_id, None)
+        yield from run_scan(scan_id, scan["input"], scan["data"])
 
     return Response(
         stream_with_context(generate()),
         mimetype='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
     )
+
+
+@app.route('/history')
+def get_history():
+    return jsonify(list(reversed(scan_history)))
+
+
+@app.route('/export/<scan_id>')
+def export_pdf(scan_id):
+    scan = scans.get(scan_id)
+    if not scan:
+        return jsonify({"error": "scan not found or expired"}), 404
+    report_html = scan['data'].get('report_html', '')
+    if not report_html:
+        return jsonify({"error": "no report available"}), 404
+    domain = scan['data'].get('domain', 'unknown')
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body {{ font-family: Arial, sans-serif; color: #1a1a1a; max-width: 900px; margin: 0 auto; padding: 2rem; line-height: 1.6; }}
+h1 {{ font-size: 1.8rem; border-bottom: 2px solid #1a1a1a; padding-bottom: 0.5rem; margin-bottom: 0.5rem; }}
+.meta {{ color: #555; font-size: 0.9rem; margin-bottom: 2rem; }}
+h2 {{ font-size: 1.1rem; color: #111; border-bottom: 1px solid #ccc; padding-bottom: 0.3rem; margin: 1.5rem 0 0.75rem; }}
+p {{ margin-bottom: 0.75rem; }}
+ul {{ margin: 0.5rem 0 0.75rem 1.5rem; }}
+li {{ margin-bottom: 0.3rem; }}
+strong {{ color: #000; }}
+.badge-high   {{ background: #ff4444; color: #fff; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }}
+.badge-medium {{ background: #ffaa00; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }}
+.badge-low    {{ background: #22c55e; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }}
+footer {{ margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ccc; font-size: 0.75rem; color: #888; }}
+</style>
+</head>
+<body>
+<h1>HEIMDALL — Threat Intelligence Report</h1>
+<div class="meta">Target: <strong>{domain}</strong></div>
+{report_html}
+<footer>Generated by Heimdall OSINT. Use responsibly and only on domains you own or have permission to test.</footer>
+</body>
+</html>"""
+    try:
+        pdf_bytes = weasyprint.HTML(string=full_html).write_pdf()
+        return Response(
+            pdf_bytes,
+            mimetype='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="heimdall-{domain}.pdf"'},
+        )
+    except Exception as e:
+        return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=os.environ.get("FLASK_DEBUG", "0") == "1", port=5000)

@@ -4,20 +4,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heimdall — OSINT Intelligence</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0d1117;
-      --surface:  #161b22;
-      --border:   #30363d;
-      --green:    #00ff88;
-      --green-dim:#00cc6a;
-      --red:      #ff4444;
-      --amber:    #ffaa00;
-      --text:     #c9d1d9;
-      --muted:    #8b949e;
-      --font:     'Courier New', Courier, monospace;
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface2:  #1c2128;
+      --border:    #30363d;
+      --green:     #00ff88;
+      --green-dim: #00cc6a;
+      --red:       #ff4444;
+      --amber:     #ffaa00;
+      --text:      #c9d1d9;
+      --muted:     #8b949e;
+      --font:      'Courier New', Courier, monospace;
+      --sidebar-w: 260px;
+    }
+
+    body.light {
+      --bg:        #f6f8fa;
+      --surface:   #ffffff;
+      --surface2:  #f0f2f4;
+      --border:    #d0d7de;
+      --green:     #1a7f37;
+      --green-dim: #116329;
+      --red:       #cf222e;
+      --amber:     #9a6700;
+      --text:      #24292f;
+      --muted:     #57606a;
     }
 
     body {
@@ -25,24 +41,158 @@
       color: var(--text);
       font-family: var(--font);
       min-height: 100vh;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    /* ── layout ── */
+    .layout { display: flex; min-height: 100vh; }
+
+    /* ── sidebar ── */
+    .sidebar {
+      position: fixed;
+      top: 0; left: 0;
+      width: var(--sidebar-w);
+      height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      z-index: 200;
+      transform: translateX(calc(-1 * var(--sidebar-w)));
+      transition: transform 0.3s ease;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--green);
+    }
+
+    .history-list {
+      list-style: none;
+      overflow-y: auto;
+      flex: 1;
+      padding: 0.5rem;
+    }
+
+    .history-item {
+      padding: 0.6rem 0.75rem;
+      border-radius: 6px;
+      cursor: default;
+      border: 1px solid transparent;
+      margin-bottom: 0.3rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .history-item:hover {
+      background: var(--surface2);
+      border-color: var(--border);
+    }
+
+    .history-domain {
+      font-size: 0.85rem;
+      color: var(--text);
+      font-weight: bold;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .history-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.25rem;
+    }
+
+    .history-time {
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
+
+    .risk-badge {
+      font-size: 0.7rem;
+      font-weight: bold;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .risk-badge.high   { background: var(--red);   color: #fff; }
+    .risk-badge.medium { background: var(--amber);  color: #fff; }
+    .risk-badge.low    { background: var(--green);  color: #000; }
+
+    .history-empty {
+      padding: 1.5rem 1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* ── overlay ── */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 150;
+    }
+    .overlay.visible { display: block; }
+
+    /* ── main ── */
+    .main {
+      flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       padding: 2rem 1rem 4rem;
+      min-width: 0;
     }
 
     /* ── header ── */
-    header { text-align: center; margin-bottom: 2.5rem; }
-    header h1 {
-      font-size: clamp(2rem, 6vw, 3.5rem);
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 760px;
+      margin-bottom: 2rem;
+    }
+
+    .header-center { text-align: center; flex: 1; }
+    .header-center h1 {
+      font-size: clamp(1.8rem, 5vw, 3rem);
       letter-spacing: 0.25em;
       color: var(--green);
-      text-shadow: 0 0 20px rgba(0,255,136,0.4);
+      text-shadow: 0 0 20px rgba(0,255,136,0.3);
     }
-    header p { color: var(--muted); margin-top: 0.4rem; font-size: 0.9rem; letter-spacing: 0.05em; }
+    body.light .header-center h1 { text-shadow: none; }
+    .header-center p { color: var(--muted); margin-top: 0.3rem; font-size: 0.85rem; letter-spacing: 0.05em; }
+
+    .header-side { display: flex; gap: 0.5rem; min-width: 80px; }
+    .header-side.right { justify-content: flex-end; }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem;
+      font-family: var(--font);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+      white-space: nowrap;
+    }
+    .icon-btn:hover { color: var(--green); border-color: var(--green); }
 
     /* ── input bar ── */
-    #input-section { width: 100%; max-width: 700px; margin-bottom: 2rem; }
+    .input-section { width: 100%; max-width: 760px; margin-bottom: 1.5rem; }
     #scan-form { display: flex; gap: 0.75rem; }
     #target-input {
       flex: 1;
@@ -70,34 +220,190 @@
       transition: background 0.2s, opacity 0.2s;
       white-space: nowrap;
     }
+    body.light #scan-btn { color: #fff; }
     #scan-btn:hover:not(:disabled) { background: var(--green-dim); }
     #scan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* ── error banner ── */
+    .error-banner {
+      display: none;
+      width: 100%;
+      max-width: 760px;
+      padding: 0.75rem 1rem;
+      background: rgba(255,68,68,0.08);
+      border: 1px solid var(--red);
+      border-radius: 6px;
+      color: var(--red);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
     /* ── progress feed ── */
-    #progress-section { width: 100%; max-width: 700px; display: none; margin-bottom: 2rem; }
-    #progress-section h2 { color: var(--green); font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 0.75rem; }
-    #steps-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+    .progress-section { width: 100%; max-width: 760px; margin-bottom: 1.5rem; }
+    .progress-section h2 {
+      color: var(--green);
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 0.6rem;
+    }
+
+    #steps-list { list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+
     .step-row {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      padding: 0.5rem 0.75rem;
+      padding: 0.45rem 0.75rem;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
-      font-size: 0.85rem;
+      font-size: 0.82rem;
     }
-    .step-icon { width: 1.2rem; text-align: center; flex-shrink: 0; }
-    .step-name { color: var(--text); min-width: 10rem; }
-    .step-summary { color: var(--muted); font-size: 0.8rem; }
+    .step-icon { width: 1.1rem; text-align: center; flex-shrink: 0; }
+    .step-name { color: var(--text); min-width: 11rem; }
+    .step-summary { color: var(--muted); font-size: 0.78rem; }
     .status-running .step-icon::after { content: '⟳'; color: var(--amber); animation: spin 1s linear infinite; display: inline-block; }
     .status-done    .step-icon::after { content: '✓'; color: var(--green); }
     .status-failed  .step-icon::after { content: '✗'; color: var(--red); }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── stats card ── */
+    .stats-section { width: 100%; max-width: 760px; margin-bottom: 1.5rem; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+    }
+    .stat-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: var(--green);
+      line-height: 1;
+    }
+    .stat-label {
+      font-size: 0.7rem;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-top: 0.3rem;
+    }
+
+    /* ── viz section (gauge + radar) ── */
+    .viz-section { width: 100%; max-width: 760px; margin-bottom: 1.5rem; }
+    .viz-grid {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .gauge-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      text-align: center;
+    }
+    .gauge-container h3 {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .gauge-wrap {
+      position: relative;
+      width: 130px;
+      height: 130px;
+      margin: 0 auto;
+    }
+    .gauge-svg { width: 130px; height: 130px; }
+    .gauge-text {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+    }
+    #gauge-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: var(--green);
+      line-height: 1;
+      transition: color 0.5s;
+    }
+    .gauge-unit {
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-top: 0.1rem;
+    }
+
+    .radar-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .radar-container h3 {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+    #radar-chart { max-height: 220px; }
+
+    /* ── github warning banner ── */
+    .github-banner {
+      display: none;
+      width: 100%;
+      max-width: 760px;
+      padding: 0.75rem 1rem;
+      background: rgba(255,170,0,0.08);
+      border: 1px solid var(--amber);
+      border-radius: 6px;
+      color: var(--amber);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── skeleton loading ── */
+    .skeleton-wrap { padding: 1.5rem 2rem; }
+    .skeleton {
+      background: var(--border);
+      border-radius: 4px;
+      margin-bottom: 0.75rem;
+      animation: shimmer 1.5s infinite;
+    }
+    .skeleton-title { height: 1.2rem; width: 45%; }
+    .skeleton-text  { height: 0.8rem; width: 100%; }
+    .skeleton-text.short { width: 70%; }
+    .skeleton-text.med   { width: 85%; }
+    @keyframes shimmer {
+      0%   { opacity: 0.4; }
+      50%  { opacity: 0.8; }
+      100% { opacity: 0.4; }
+    }
+
     /* ── report ── */
-    #report-section { width: 100%; max-width: 700px; display: none; }
-    #report-section h2 { color: var(--green); font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 0.75rem; }
+    .report-section { width: 100%; max-width: 760px; }
+    .report-section > h2 {
+      color: var(--green);
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 0.6rem;
+    }
+
     #report-body {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -118,14 +424,14 @@
     #report-body p  { margin-bottom: 0.75rem; color: var(--text); font-size: 0.9rem; }
     #report-body ul { margin: 0.5rem 0 0.75rem 1.2rem; }
     #report-body li { margin-bottom: 0.35rem; color: var(--text); font-size: 0.9rem; }
-    #report-body strong { color: #e6edf3; }
+    #report-body strong { color: var(--text); filter: brightness(1.3); }
 
     .badge-high   { background: #ff4444; color: #fff; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
     .badge-medium { background: #ffaa00; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
-    .badge-low    { background: #00ff88; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+    .badge-low    { background: #00cc55; color: #000; padding: 1px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
 
     /* ── action bar ── */
-    #action-bar { display: none; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
+    .action-bar { display: none; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
     .action-btn {
       padding: 0.6rem 1.2rem;
       border: 1px solid var(--green);
@@ -138,97 +444,178 @@
       transition: background 0.2s, color 0.2s;
     }
     .action-btn:hover { background: var(--green); color: #0d1117; }
-
-    /* ── error banner ── */
-    #error-banner {
-      display: none;
-      width: 100%;
-      max-width: 700px;
-      padding: 0.75rem 1rem;
-      background: rgba(255,68,68,0.1);
-      border: 1px solid var(--red);
-      border-radius: 6px;
-      color: var(--red);
-      font-size: 0.85rem;
-      margin-bottom: 1rem;
-    }
+    body.light .action-btn:hover { color: #fff; }
 
     /* ── footer ── */
     footer {
       margin-top: auto;
       padding-top: 3rem;
       color: var(--muted);
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       text-align: center;
       max-width: 600px;
     }
 
+    /* ── responsive ── */
+    @media (max-width: 600px) {
+      #scan-form { flex-direction: column; }
+      .step-name { min-width: unset; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .viz-grid { grid-template-columns: 1fr; }
+      .gauge-container { order: -1; }
+    }
+
     /* ── print / PDF ── */
     @media print {
-      body { background: #fff; color: #000; padding: 1rem; }
-      header h1 { color: #000; text-shadow: none; }
-      #input-section, #progress-section, #action-bar, footer { display: none !important; }
-      #report-section { display: block !important; }
-      #report-body { border: none; padding: 0; }
+      body { background: #fff; color: #000; }
+      .header-side, .input-section, .progress-section, .action-bar, .github-banner,
+      .stats-section, .viz-section, footer, .sidebar, .overlay { display: none !important; }
+      .report-section { display: block !important; max-width: 100%; }
+      #report-body { border: none; padding: 0; background: #fff; }
       #report-body h2 { color: #000; border-bottom: 1px solid #ccc; }
       #report-body p, #report-body li { color: #000; }
       .badge-high   { background: #fcc; color: #000; }
       .badge-medium { background: #fec; color: #000; }
       .badge-low    { background: #cfc; color: #000; }
     }
-
-    @media (max-width: 500px) {
-      #scan-form { flex-direction: column; }
-      .step-name { min-width: unset; }
-    }
   </style>
 </head>
 <body>
 
-  <header>
-    <h1>HEIMDALL</h1>
-    <p>Autonomous OSINT Intelligence Platform</p>
-  </header>
-
-  <section id="input-section">
-    <form id="scan-form" onsubmit="startScan(event)">
-      <input
-        id="target-input"
-        type="text"
-        placeholder="company name or domain (e.g. google.com)"
-        autocomplete="off"
-        spellcheck="false"
-        required
-      />
-      <button id="scan-btn" type="submit">Run Scan</button>
-    </form>
-  </section>
-
-  <div id="error-banner"></div>
-
-  <section id="progress-section">
-    <h2>// Recon Progress</h2>
-    <ul id="steps-list"></ul>
-  </section>
-
-  <div id="new-scan-wrap" style="width:100%;max-width:700px;display:none;margin-bottom:1rem;">
-    <button id="new-scan-btn" class="action-btn" onclick="newScan()">New Scan</button>
-  </div>
-
-  <section id="report-section">
-    <h2>// Threat Intelligence Report</h2>
-    <div id="report-body"></div>
-    <div id="action-bar">
-      <button class="action-btn" onclick="copyReport(this)">Copy Report</button>
-      <button class="action-btn" onclick="window.print()">Download PDF</button>
-      <button class="action-btn" onclick="newScan()">New Scan</button>
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <span>// Recent Scans</span>
+      <button id="sidebar-close" class="icon-btn">✕</button>
     </div>
-  </section>
+    <ul id="history-list" class="history-list"></ul>
+    <div id="history-empty" class="history-empty">No recent scans this session.</div>
+  </aside>
 
-  <footer>
-    Heimdall uses only publicly available data.<br />
-    Use responsibly and only on domains you own or have permission to test.
-  </footer>
+  <div id="overlay" class="overlay"></div>
+
+  <div class="layout">
+    <main class="main">
+
+      <header class="header">
+        <div class="header-side">
+          <button id="history-toggle" class="icon-btn" title="Recent scans">☰ History</button>
+        </div>
+        <div class="header-center">
+          <h1>HEIMDALL</h1>
+          <p>Autonomous OSINT Intelligence Platform</p>
+        </div>
+        <div class="header-side right">
+          <button id="theme-toggle" class="icon-btn" title="Toggle light/dark mode">☀ Light</button>
+        </div>
+      </header>
+
+      <section class="input-section">
+        <form id="scan-form" onsubmit="startScan(event)">
+          <input
+            id="target-input"
+            type="text"
+            placeholder="company name or domain (e.g. google.com)"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+          <button id="scan-btn" type="submit">Run Scan</button>
+        </form>
+      </section>
+
+      <div id="error-banner" class="error-banner"></div>
+
+      <section id="progress-section" class="progress-section" style="display:none">
+        <h2>// Recon Progress</h2>
+        <ul id="steps-list"></ul>
+      </section>
+
+      <section id="stats-section" class="stats-section" style="display:none">
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-value" id="stat-subdomains">--</div>
+            <div class="stat-label">Subdomains</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-tech">--</div>
+            <div class="stat-label">Technologies</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-github">--</div>
+            <div class="stat-label">GitHub Mentions</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-wayback">--</div>
+            <div class="stat-label">Wayback URLs</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="viz-section" class="viz-section" style="display:none">
+        <div class="viz-grid">
+          <div class="gauge-container">
+            <h3>Risk Score</h3>
+            <div class="gauge-wrap">
+              <svg class="gauge-svg" viewBox="0 0 140 140">
+                <circle cx="70" cy="70" r="54" fill="none" stroke="var(--border)" stroke-width="10"/>
+                <circle
+                  id="gauge-circle"
+                  cx="70" cy="70" r="54"
+                  fill="none"
+                  stroke="#00ff88"
+                  stroke-width="10"
+                  stroke-dasharray="339.3"
+                  stroke-dashoffset="339.3"
+                  stroke-linecap="round"
+                  transform="rotate(-90 70 70)"
+                />
+              </svg>
+              <div class="gauge-text">
+                <div id="gauge-value">--</div>
+                <div class="gauge-unit">/ 100</div>
+              </div>
+            </div>
+          </div>
+          <div class="radar-container">
+            <h3>Attack Surface</h3>
+            <canvas id="radar-chart"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <div id="github-banner" class="github-banner">
+        &#9888; GitHub Exposure Detected —
+        <span id="github-count-text"></span> code mention(s) found publicly. Review exposed repositories.
+      </div>
+
+      <section id="report-section" class="report-section" style="display:none">
+        <h2>// Threat Intelligence Report</h2>
+        <div id="report-skeleton" class="skeleton-wrap" style="display:none">
+          <div class="skeleton skeleton-title"></div>
+          <div class="skeleton skeleton-text med"></div>
+          <div class="skeleton skeleton-text"></div>
+          <div class="skeleton skeleton-text short"></div>
+          <br/>
+          <div class="skeleton skeleton-title"></div>
+          <div class="skeleton skeleton-text"></div>
+          <div class="skeleton skeleton-text med"></div>
+          <div class="skeleton skeleton-text short"></div>
+        </div>
+        <div id="report-body"></div>
+        <div id="action-bar" class="action-bar">
+          <button class="action-btn" onclick="copyReport(this)">Copy Report</button>
+          <button class="action-btn" onclick="downloadPDF()">Download PDF</button>
+          <button class="action-btn" onclick="newScan()">New Scan</button>
+        </div>
+      </section>
+
+      <footer>
+        Heimdall uses only publicly available data.<br />
+        Use responsibly and only on domains you own or have permission to test.
+      </footer>
+
+    </main>
+  </div>
 
   <script>
     const STEP_NAMES = [
@@ -240,50 +627,168 @@
       "Wayback Machine",
       "Robots & Sitemap",
       "Breach Check",
+      "GitHub Leaks",
+      "VirusTotal Check",
       "Generating Report",
     ];
 
-    let activeSource = null;
+    let activeSource  = null;
+    let currentScanId = null;
+    let radarChart    = null;
+    let lastReportData = null;
 
-    function showError(msg) {
-      const banner = document.getElementById('error-banner');
-      banner.textContent = msg;
-      banner.style.display = 'block';
+    // ── theme toggle ──
+    const themeBtn = document.getElementById('theme-toggle');
+    themeBtn.addEventListener('click', () => {
+      document.body.classList.toggle('light');
+      themeBtn.textContent = document.body.classList.contains('light') ? '🌙 Dark' : '☀ Light';
+      if (radarChart) updateRadarTheme();
+    });
+
+    // ── sidebar ──
+    document.getElementById('history-toggle').addEventListener('click', () => {
+      document.getElementById('sidebar').classList.add('open');
+      document.getElementById('overlay').classList.add('visible');
+      loadHistory();
+    });
+    document.getElementById('sidebar-close').addEventListener('click', closeSidebar);
+    document.getElementById('overlay').addEventListener('click', closeSidebar);
+
+    function closeSidebar() {
+      document.getElementById('sidebar').classList.remove('open');
+      document.getElementById('overlay').classList.remove('visible');
     }
 
-    function hideError() {
-      document.getElementById('error-banner').style.display = 'none';
+    async function loadHistory() {
+      try {
+        const resp = await fetch('/history');
+        const history = await resp.json();
+        const list  = document.getElementById('history-list');
+        const empty = document.getElementById('history-empty');
+        list.innerHTML = '';
+        if (!history.length) { empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+        history.forEach(item => {
+          const li = document.createElement('li');
+          li.className = 'history-item';
+          const scoreVal = item.risk_score ?? 0;
+          const cls = scoreVal >= 70 ? 'high' : scoreVal >= 40 ? 'medium' : 'low';
+          const dt  = new Date(item.timestamp).toLocaleString();
+          li.innerHTML = `
+            <div class="history-domain">${escHtml(item.domain)}</div>
+            <div class="history-meta">
+              <span class="risk-badge ${cls}">${scoreVal}</span>
+              <span class="history-time">${escHtml(dt)}</span>
+            </div>`;
+          list.appendChild(li);
+        });
+      } catch (e) {
+        console.error('History load failed:', e);
+      }
     }
 
-    function setScanning(active) {
-      document.getElementById('scan-btn').disabled = active;
-      document.getElementById('target-input').disabled = active;
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     }
 
-    function buildProgressRows() {
-      const list = document.getElementById('steps-list');
-      list.innerHTML = '';
-      STEP_NAMES.forEach(name => {
-        const li = document.createElement('li');
-        li.className = 'step-row status-pending';
-        li.id = `step-${name.replace(/\s+/g, '-')}`;
-        li.innerHTML = `
-          <span class="step-icon"></span>
-          <span class="step-name">${name}</span>
-          <span class="step-summary"></span>
-        `;
-        list.appendChild(li);
+    // ── gauge ──
+    function animateGauge(score) {
+      const circumference = 339.3;
+      const offset = circumference - (score / 100) * circumference;
+      const circle  = document.getElementById('gauge-circle');
+      const valueEl = document.getElementById('gauge-value');
+
+      const color = score >= 70 ? '#ff4444' : score >= 40 ? '#ffaa00' : '#00ff88';
+      circle.style.stroke = color;
+      circle.style.transition = 'stroke-dashoffset 1.5s ease-in-out';
+      circle.style.strokeDashoffset = offset;
+      valueEl.style.color = color;
+
+      // count-up animation
+      let current = 0;
+      const increment = score / 40;
+      const ticker = setInterval(() => {
+        current = Math.min(current + increment, score);
+        valueEl.textContent = Math.round(current);
+        if (current >= score) clearInterval(ticker);
+      }, 37);
+    }
+
+    // ── radar chart ──
+    function radarColors() {
+      const light = document.body.classList.contains('light');
+      return {
+        text:    light ? '#24292f' : '#c9d1d9',
+        grid:    light ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)',
+        accent:  light ? '#1a7f37' : '#00ff88',
+        fill:    light ? 'rgba(26,127,55,0.15)' : 'rgba(0,255,136,0.15)',
+      };
+    }
+
+    function buildRadarData(d) {
+      return [
+        Math.min(d.subdomain_count / 5, 10),
+        Math.min(d.dns_count / 3, 10),
+        Math.min(d.tech_count, 10),
+        Math.min(d.wayback_count / 2, 10),
+        d.breach_status === 'breached' ? 8 : 1,
+        Math.min(d.github_count, 10),
+      ];
+    }
+
+    function initRadarChart(d) {
+      const c = radarColors();
+      const ctx = document.getElementById('radar-chart').getContext('2d');
+      if (radarChart) { radarChart.destroy(); radarChart = null; }
+      radarChart = new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels: ['Subdomains', 'DNS Records', 'Technologies', 'Wayback URLs', 'Breach History', 'GitHub Exposure'],
+          datasets: [{
+            label: 'Exposure',
+            data: buildRadarData(d),
+            backgroundColor: c.fill,
+            borderColor: c.accent,
+            pointBackgroundColor: c.accent,
+            pointBorderColor: c.accent,
+            borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          scales: {
+            r: {
+              min: 0, max: 10,
+              ticks: { display: false },
+              grid:        { color: c.grid },
+              angleLines:  { color: c.grid },
+              pointLabels: { color: c.text, font: { family: "'Courier New', monospace", size: 10 } },
+            },
+          },
+          plugins: { legend: { display: false } },
+        },
       });
     }
 
-    function updateStep(name, status, summary) {
-      const id = `step-${name.replace(/\s+/g, '-')}`;
-      const row = document.getElementById(id);
-      if (!row) return;
-      row.className = `step-row status-${status}`;
-      row.querySelector('.step-summary').textContent = summary || '';
+    function updateRadarTheme() {
+      if (!radarChart) return;
+      const c = radarColors();
+      radarChart.options.scales.r.grid.color        = c.grid;
+      radarChart.options.scales.r.angleLines.color  = c.grid;
+      radarChart.options.scales.r.pointLabels.color = c.text;
+      radarChart.data.datasets[0].borderColor       = c.accent;
+      radarChart.data.datasets[0].pointBackgroundColor = c.accent;
+      radarChart.data.datasets[0].pointBorderColor  = c.accent;
+      radarChart.data.datasets[0].backgroundColor   = c.fill;
+      radarChart.update();
     }
 
+    // ── scan flow ──
     async function startScan(e) {
       e.preventDefault();
       hideError();
@@ -291,10 +796,7 @@
       const input = document.getElementById('target-input').value.trim();
       if (!input) return;
 
-      // Reset UI
-      document.getElementById('report-section').style.display = 'none';
-      document.getElementById('action-bar').style.display = 'none';
-      document.getElementById('report-body').innerHTML = '';
+      resetScanUI();
       buildProgressRows();
       document.getElementById('progress-section').style.display = 'block';
       setScanning(true);
@@ -311,6 +813,7 @@
         const json = await resp.json();
         if (!resp.ok) { showError(json.error || 'Scan failed to start'); setScanning(false); return; }
         scanId = json.scan_id;
+        currentScanId = scanId;
       } catch (err) {
         showError('Could not reach the server. Is Flask running?');
         setScanning(false);
@@ -319,22 +822,46 @@
 
       activeSource = new EventSource(`/stream/${scanId}`);
 
-      activeSource.addEventListener('step', e => {
-        const d = JSON.parse(e.data);
+      activeSource.addEventListener('step', ev => {
+        const d = JSON.parse(ev.data);
         updateStep(d.name, d.status, d.summary);
+        if (d.name === 'Generating Report' && d.status === 'running') {
+          document.getElementById('report-section').style.display = 'block';
+          document.getElementById('report-skeleton').style.display = 'block';
+        }
       });
 
-      activeSource.addEventListener('report', e => {
-        const d = JSON.parse(e.data);
+      activeSource.addEventListener('report', ev => {
+        const d = JSON.parse(ev.data);
+        lastReportData = d;
+
+        document.getElementById('report-skeleton').style.display = 'none';
         document.getElementById('report-body').innerHTML = d.html;
-        document.getElementById('report-section').style.display = 'block';
+
+        // stats card
+        document.getElementById('stat-subdomains').textContent = d.subdomain_count;
+        document.getElementById('stat-tech').textContent       = d.tech_count;
+        document.getElementById('stat-github').textContent     = d.github_count;
+        document.getElementById('stat-wayback').textContent    = d.wayback_count;
+        document.getElementById('stats-section').style.display = 'block';
+
+        // gauge + radar
+        document.getElementById('viz-section').style.display = 'block';
+        animateGauge(d.risk_score);
+        setTimeout(() => initRadarChart(d), 100);
+
+        // github warning
+        if (d.github_count > 0) {
+          document.getElementById('github-count-text').textContent = d.github_count;
+          document.getElementById('github-banner').style.display = 'block';
+        }
       });
 
       activeSource.addEventListener('done', () => {
         activeSource.close();
         activeSource = null;
         setScanning(false);
-        document.getElementById('new-scan-wrap').style.display = 'block';
+        document.getElementById('report-skeleton').style.display = 'none';
         if (document.getElementById('report-body').innerHTML.trim()) {
           document.getElementById('action-bar').style.display = 'flex';
         }
@@ -343,12 +870,15 @@
       activeSource.onerror = () => {
         if (activeSource) { activeSource.close(); activeSource = null; }
         setScanning(false);
-        document.getElementById('new-scan-btn').style.display = 'inline-block';
-        document.getElementById('new-scan-wrap').style.display = 'block';
+        document.getElementById('report-skeleton').style.display = 'none';
         if (!document.getElementById('report-body').innerHTML.trim()) {
           showError('Stream connection lost. The scan may have encountered an error.');
         }
       };
+    }
+
+    function downloadPDF() {
+      if (currentScanId) window.location.href = `/export/${currentScanId}`;
     }
 
     function copyReport(btn) {
@@ -368,15 +898,62 @@
     }
 
     function newScan() {
-      document.getElementById('progress-section').style.display = 'none';
-      document.getElementById('report-section').style.display = 'none';
-      document.getElementById('action-bar').style.display = 'none';
-      document.getElementById('new-scan-wrap').style.display = 'none';
-      document.getElementById('report-body').innerHTML = '';
+      resetScanUI();
       document.getElementById('target-input').value = '';
       document.getElementById('target-input').focus();
       hideError();
       setScanning(false);
+      currentScanId  = null;
+      lastReportData = null;
+    }
+
+    function resetScanUI() {
+      document.getElementById('progress-section').style.display = 'none';
+      document.getElementById('report-section').style.display   = 'none';
+      document.getElementById('action-bar').style.display       = 'none';
+      document.getElementById('stats-section').style.display    = 'none';
+      document.getElementById('viz-section').style.display      = 'none';
+      document.getElementById('github-banner').style.display    = 'none';
+      document.getElementById('report-body').innerHTML          = '';
+      document.getElementById('report-skeleton').style.display  = 'none';
+      if (radarChart) { radarChart.destroy(); radarChart = null; }
+    }
+
+    function buildProgressRows() {
+      const list = document.getElementById('steps-list');
+      list.innerHTML = '';
+      STEP_NAMES.forEach(name => {
+        const li = document.createElement('li');
+        li.className = 'step-row status-pending';
+        li.id = `step-${name.replace(/\s+/g, '-')}`;
+        li.innerHTML = `
+          <span class="step-icon"></span>
+          <span class="step-name">${escHtml(name)}</span>
+          <span class="step-summary"></span>`;
+        list.appendChild(li);
+      });
+    }
+
+    function updateStep(name, status, summary) {
+      const row = document.getElementById(`step-${name.replace(/\s+/g, '-')}`);
+      if (!row) return;
+      row.className = `step-row status-${status}`;
+      row.querySelector('.step-summary').textContent = summary || '';
+    }
+
+    function showError(msg) {
+      const b = document.getElementById('error-banner');
+      b.textContent = msg;
+      b.style.display = 'block';
+    }
+
+    function hideError() {
+      document.getElementById('error-banner').style.display = 'none';
+    }
+
+    function setScanning(active) {
+      document.getElementById('scan-btn').disabled       = active;
+      document.getElementById('target-input').disabled   = active;
     }
   </script>
 
